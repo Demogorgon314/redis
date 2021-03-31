@@ -2063,8 +2063,12 @@ void initServer(void) {
     server.clients_paused = 0;
     server.system_memory_size = zmalloc_get_memory_size();
 
+    // 创建一些共享常量
     createSharedObjects();
+
+    // 尝试调整最大文件描述符数 linux 可以设置 ulimit -n 10000
     adjustOpenFilesLimit();
+    // 创建 reactor eventLoop
     server.el = aeCreateEventLoop(server.maxclients+CONFIG_FDSET_INCR);
     if (server.el == NULL) {
         serverLog(LL_WARNING,
@@ -2072,14 +2076,20 @@ void initServer(void) {
             strerror(errno));
         exit(1);
     }
+    // 初始化 redis 内存
     server.db = zmalloc(sizeof(redisDb)*server.dbnum);
 
     /* Open the TCP listening socket for the user commands. */
+    // 监听 server 端口 并且设置为非阻塞模式
     if (server.port != 0 &&
         listenToPort(server.port,server.ipfd,&server.ipfd_count) == C_ERR)
         exit(1);
 
     /* Open the listening Unix domain socket. */
+    // 打开 Unix domain socket
+    // UDS传输不需要经过网络协议栈,不需要打包拆包等操作,只是数据的拷贝过程
+    // UDS分为SOCK_STREAM(流套接字) 和 SOCK_DGRAM(数据包套接字),由于是在本机通过内核通信,不会丢包也不会出现发送包的次序和接收包的次序不一致的问题
+    // 这里用的是 SOCK_DGRAM(数据包套接字)
     if (server.unixsocket != NULL) {
         unlink(server.unixsocket); /* don't care if this fails */
         server.sofd = anetUnixServer(server.neterr,server.unixsocket,
@@ -2088,16 +2098,19 @@ void initServer(void) {
             serverLog(LL_WARNING, "Opening Unix socket: %s", server.neterr);
             exit(1);
         }
+        // 设置为非阻塞
         anetNonBlock(NULL,server.sofd);
     }
 
     /* Abort if there are no listening sockets at all. */
+    // 如果没有任何监听的 socket ，直接退出
     if (server.ipfd_count == 0 && server.sofd < 0) {
         serverLog(LL_WARNING, "Configured to not listen anywhere, exiting.");
         exit(1);
     }
 
     /* Create the Redis databases, and initialize other internal state. */
+    // 初始化 redis db 数据结构
     for (j = 0; j < server.dbnum; j++) {
         server.db[j].dict = dictCreate(&dbDictType,NULL);
         server.db[j].expires = dictCreate(&keyptrDictType,NULL);
@@ -2108,7 +2121,10 @@ void initServer(void) {
         server.db[j].avg_ttl = 0;
         server.db[j].defrag_later = listCreate();
     }
+    // 初始化 LRU keys 池
     evictionPoolAlloc(); /* Initialize the LRU keys pool. */
+
+    // redis 管道初始化
     server.pubsub_channels = dictCreate(&keylistDictType,NULL);
     server.pubsub_patterns = listCreate();
     listSetFreeMethod(server.pubsub_patterns,freePubsubPattern);
@@ -2121,6 +2137,8 @@ void initServer(void) {
     server.child_info_pipe[0] = -1;
     server.child_info_pipe[1] = -1;
     server.child_info_data.magic = 0;
+
+    // 初始化 aof 重写缓存
     aofRewriteBufferReset();
     server.aof_buf = sdsempty();
     server.lastsave = time(NULL); /* At startup we consider the DB saved. */
@@ -2128,6 +2146,8 @@ void initServer(void) {
     server.rdb_save_time_last = -1;
     server.rdb_save_time_start = -1;
     server.dirty = 0;
+
+    // 重置服务器状态
     resetServerStats();
     /* A few stats we don't want to reset: server startup time, and peak mem. */
     server.stat_starttime = time(NULL);
@@ -2147,6 +2167,7 @@ void initServer(void) {
     /* Create the timer callback, this is our way to process many background
      * operations incrementally, like clients timeout, eviction of unaccessed
      * expired keys and so forth. */
+    // 创建定时回调，处理后台任务，比如客户端超时，清除过期key等
     if (aeCreateTimeEvent(server.el, 1, serverCron, NULL, NULL) == AE_ERR) {
         serverPanic("Can't create event loop timers.");
         exit(1);
@@ -2154,6 +2175,7 @@ void initServer(void) {
 
     /* Create an event handler for accepting new connections in TCP and Unix
      * domain sockets. */
+    // 创建一个事件处理器来接收新的 TCP、UDS 连接
     for (j = 0; j < server.ipfd_count; j++) {
         if (aeCreateFileEvent(server.el, server.ipfd[j], AE_READABLE,
             acceptTcpHandler,NULL) == AE_ERR)
@@ -2583,7 +2605,7 @@ void call(client *c, int flags) {
  * other operations can be performed by the caller. Otherwise
  * if C_ERR is returned the client was destroyed (i.e. after QUIT). */
 int processCommand(client *c) {
-    moduleCallCommandFilters(c);
+    moduleCallCommandFilters(c); // 如果加装了模块就走这里面的命令
 
     /* The QUIT command is handled separately. Normal command procs will
      * go through checking for replication and QUIT will cause trouble
@@ -2616,7 +2638,7 @@ int processCommand(client *c) {
         return C_OK;
     }
 
-    /* Check if the user is authenticated */
+    /* Check if the user is authenticated 检查认证 */
     if (server.requirepass && !c->authenticated && c->cmd->proc != authCommand)
     {
         flagTransaction(c);
@@ -2769,7 +2791,7 @@ int processCommand(client *c) {
         return C_OK;
     }
 
-    /* Exec the command */
+    /* Exec the command 真正执行命令*/
     if (c->flags & CLIENT_MULTI &&
         c->cmd->proc != execCommand && c->cmd->proc != discardCommand &&
         c->cmd->proc != multiCommand && c->cmd->proc != watchCommand)
@@ -4311,6 +4333,7 @@ int main(int argc, char **argv) {
         }
 
         /* First argument is the config file name? */
+        // 判断第一个参数是否是配置文件
         if (argv[j][0] != '-' || argv[j][1] != '-') {
             configfile = argv[j];
             server.configfile = getAbsolutePath(configfile);

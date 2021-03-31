@@ -360,6 +360,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
     int processed = 0, numevents;
 
     /* Nothing to do? return ASAP */
+    // 如果无事可做，尽快返回
     if (!(flags & AE_TIME_EVENTS) && !(flags & AE_FILE_EVENTS)) return 0;
 
     /* Note that we want call select() even if there are no
@@ -416,9 +417,11 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
 
         for (j = 0; j < numevents; j++) {
             aeFileEvent *fe = &eventLoop->events[eventLoop->fired[j].fd];
+            // 当前事件
             int mask = eventLoop->fired[j].mask;
+            // 文件描述符
             int fd = eventLoop->fired[j].fd;
-            int fired = 0; /* Number of events fired for current fd. */
+            int fired = 0; /* 当前时间触发的事件数 Number of events fired for current fd. */
 
             /* Normally we execute the readable event first, and the writable
              * event laster. This is useful as sometimes we may be able
@@ -431,6 +434,12 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
              * This is useful when, for instance, we want to do things
              * in the beforeSleep() hook, like fsynching a file to disk,
              * before replying to a client. */
+            /**
+             * 通常我们先执行可读事件，然后执行可写事件。这很有用，因为有时我们可能能够理查询后立即提供查询的答复。
+             * 但是，如果在掩码中设置了AE_BARRIER，则我们的应用程序将要求我们做相反的事情：永远不要在可读性之后触发可写在处事件。
+             * 在这种情况下，我们将呼叫倒置。
+             * 例如，当我们想在响应客户端之前在 beforeSleep（）挂钩中执行操作（例如将文件同步到磁盘）时，此功能很有用
+             */
             int invert = fe->mask & AE_BARRIER;
 
             /* Note the "fe->mask & mask & ..." code: maybe an already
@@ -444,7 +453,7 @@ int aeProcessEvents(aeEventLoop *eventLoop, int flags)
                 fired++;
             }
 
-            /* Fire the writable event. */
+            /* 触发可写事件 Fire the writable event. */
             if (fe->mask & mask & AE_WRITABLE) {
                 if (!fired || fe->wfileProc != fe->rfileProc) {
                     fe->wfileProc(eventLoop,fd,fe->clientData,mask);

@@ -82,8 +82,14 @@ void linkClient(client *c) {
     uint64_t id = htonu64(c->id);
     raxInsert(server.clients_index,(unsigned char*)&id,sizeof(id),c,NULL);
 }
-
+/**
+ * 创建一个客户端
+ *
+ * @param fd 文件描述符
+ * @return
+ */
 client *createClient(int fd) {
+    // 给客户端分配内存
     client *c = zmalloc(sizeof(client));
 
     /* passing -1 as fd it is possible to create a non connected client.
@@ -674,6 +680,7 @@ static void acceptCommonHandler(int fd, int flags, char *ip) {
      * connection. Note that we create the client instead to check before
      * for this condition, since now the socket is already set in non-blocking
      * mode and we can send an error for free using the Kernel I/O */
+    // 如果超过配置的最大客户端连接数，报错，并且释放掉当前客户端
     if (listLength(server.clients) > server.maxclients) {
         char *err = "-ERR max number of clients reached\r\n";
 
@@ -690,6 +697,10 @@ static void acceptCommonHandler(int fd, int flags, char *ip) {
      * is no password set, nor a specific interface is bound, we don't accept
      * requests from non loopback interfaces. Instead we try to explain the
      * user what to do to fix it if needed. */
+    /**
+     * 如果服务器以保护模式（默认）运行，并且未设置密码，也未绑定特定接口，则我们不接受来自非环回接口的请求。
+     * 而且，我们尝试向用户解释在需要时应如何解决
+     */
     if (server.protected_mode &&
         server.bindaddr_count == 0 &&
         server.requirepass == NULL &&
@@ -730,7 +741,14 @@ static void acceptCommonHandler(int fd, int flags, char *ip) {
     server.stat_numconnections++;
     c->flags |= flags;
 }
-
+/**
+ * 接收连接处理器
+ *
+ * @param el
+ * @param fd
+ * @param privdata
+ * @param mask
+ */
 void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
     int cport, cfd, max = MAX_ACCEPTS_PER_CALL;
     char cip[NET_IP_STR_LEN];
@@ -747,6 +765,7 @@ void acceptTcpHandler(aeEventLoop *el, int fd, void *privdata, int mask) {
             return;
         }
         serverLog(LL_VERBOSE,"Accepted %s:%d", cip, cport);
+        //
         acceptCommonHandler(cfd,0,cip);
     }
 }
@@ -1121,7 +1140,7 @@ int handleClientsWithPendingWrites(void) {
     return processed;
 }
 
-/* resetClient prepare the client to process the next command */
+/* 重置 Client 准备处理下一个命令 resetClient prepare the client to process the next command */
 void resetClient(client *c) {
     redisCommandProc *prevcmd = c->cmd ? c->cmd->proc : NULL;
 
